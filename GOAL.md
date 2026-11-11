@@ -1,14 +1,14 @@
 # DCRMux — Goal & Guardrails
 
-`dcrmux` is a single-window 3-pane terminal multiplexer (TUI) that unifies GitHub issue tree navigation, AI issue summaries, and interactive `dcr <repo> <issue>` devcontainer sessions so you never have to leave the terminal or track issue dependencies manually.
+`dcrmux` is a client-server 3-pane terminal multiplexer (similar to Rex) that unifies GitHub issue tree navigation, AI issue summaries, and interactive `dcr <repo> <issue>` devcontainer sessions so you never have to leave the terminal or track issue dependencies manually. A persistent server runs inside the network—receiving real-time GitHub updates and pre-caching issue trees and Ollama summaries in the background—so everything is warm and ready as soon as a client attaches.
 
 ## 1. Layout & Core UX
 
 ```text
 +--------------------------+-------------------------------------------------------+
 | LEFT PANE (25-30% W)     | TOP-RIGHT PANE (~25% H): Issue Summary                |
-|                          | #6 PStore Layer — 2-paragraph Llama summary           |
-| brotherlogic/dcrmux      | (falls back to raw issue markdown while loading)      |
+|                          | #6 PStore Layer — 2-paragraph Ollama summary          |
+| brotherlogic/dcrmux      | (pre-cached on server; falls back to raw markdown)    |
 |   #1 Project Setup [x]   +-------------------------------------------------------+
 | > #6 PStore Layer  [*]   | BOTTOM-RIGHT PANE (~75% H): Active dcr Session        |
 |   #7 gRPC Handler  [ ]   |                                                       |
@@ -26,12 +26,13 @@
 
 ## 2. Hard Guardrails (The Constitution)
 
+- **Architecture:** Rex-style client-server application. A persistent `dcrmux` server runs inside the local network (maintaining state, subscriptions, and pre-computed caches), and a client attaches to it (exact server placement and attach transport deferred to MVP prototyping).
 - **Stack:** Go (`github.com/brotherlogic/dcrmux`), Charmbracelet (`bubbletea`, `lipgloss`, `bubbles`), and `creack/pty` for terminal emulation.
 - **Real Workspace Integrations:**
-  - **Session Execution:** Invoke `dcr <repo> <issue>` via `creack/pty` (reusing `dcrouter`'s existing SSH config; do not reimplement SSH jump-host routing).
-  - **GitHub State:** Authenticate via `gh auth token` / `GITHUB_TOKEN`. Read issue hierarchies, PR links, and `devcontainer-manager` state labels (`container-creating`, `container-ready`, `container-failed`).
-  - **Live Events:** Support `brotherlogic/ghwebhook` (`ghwebhook.v1.RegistrationService.Register` + `WebhookHandler.ReceiveWebhook` for `IssueEvent` and `PullRequestEvent`), with a background GitHub API polling fallback (every 45s) when running locally without an ingress callback address.
-  - **Summaries:** Query an OpenAI-compatible `/v1/chat/completions` endpoint (configurable in `~/.config/dcrmux/config.yaml`) for a 2-paragraph summary; always render raw issue markdown immediately as a fallback if offline or in-flight.
+  - **Session Execution:** Invoke `dcr <repo> <issue>` (reusing `dcrouter` / devcontainer SSH routing rather than reimplementing SSH jump-host logic).
+  - **GitHub State:** Authenticate via `gh auth token` / `GITHUB_TOKEN`. Read issue hierarchies, PR links, and `devcontainer-manager` state (`container-creating`, `container-ready`, `container-failed`).
+  - **Live Events & Pre-Caching:** Because the server runs persistently inside the network, register directly with `brotherlogic/ghwebhook` (`ghwebhook.v1.RegistrationService.Register` + `WebhookHandler.ReceiveWebhook` for `IssueEvent` and `PullRequestEvent`) to pre-cache issue tree updates in real time, with background GitHub API polling as a fallback.
+  - **Summaries:** Use a local Ollama instance on the network to pre-generate and cache 2-paragraph issue summaries in the background so they are immediately ready on attach or issue switch; render raw issue markdown as a fallback if offline or still generating.
 
 ## 3. Candidate Features to Prototype & Lock
 
@@ -39,8 +40,9 @@ See [`WORKFLOW.md`](./WORKFLOW.md) for the full **Liquid-to-Crystal (Feature-Loc
 
 Build in Liquid mode on `main`, and lock each behavior into `specs/<feature>.md` + `tests/<feature>_test.go` once it feels right:
 
-1. `three-pane-layout` — Responsive 3-pane Bubble Tea shell with `Ctrl+B` focus toggling.
-2. `embedded-dcr-pty` — Interactive PTY running `dcr <repo> <issue>` with resize propagation and disconnect recovery (`[r]` to reconnect).
-3. `issue-tree-resolution` — GitHub issue tree & PR discovery with sequential leaf-blocking logic.
-4. `llama-summary-pane` — Asynchronous 2-paragraph issue summary with in-memory cache and raw markdown fallback.
-5. `auto-advance-on-close` — Live update via `ghwebhook` / poller that closes the active session and advances to the next unblocked leaf (waiting on `container-ready` if needed).
+1. `client-server-attach` — Persistent in-network `dcrmux` server and client attach loop.
+2. `three-pane-layout` — Responsive 3-pane TUI shell with focus toggling.
+3. `embedded-dcr-pty` — Interactive session running `dcr <repo> <issue>` with resize propagation and disconnect recovery (`[r]` to reconnect).
+4. `issue-tree-resolution` — GitHub issue tree & PR discovery with sequential leaf-blocking logic.
+5. `ollama-summary-pane` — Background pre-cached 2-paragraph issue summaries via local Ollama with raw markdown fallback.
+6. `auto-advance-on-close` — Live update via `ghwebhook` / poller that closes the active session and advances to the next unblocked leaf (waiting on `container-ready` if needed).
